@@ -1,0 +1,10 @@
+# 运行时数据（含扫描结果与测试 fixture，不入库）
+data/
+*.db
+.scan-out/
+
+__pycache__/
+*.pyc
+
+# 本机配置（含机器特定路径，提供 config.json.example 参考）
+config.json

@@ -1,0 +1,4 @@
+{
+  "scan_tools_dir": "C:/path/to/scan-tools",
+  "_comment": "scan_tools/bin/ 下放 gitleaks.exe、osv.exe、trivy.exe；下载地址见 skill/vuln-scan-orchestrator/references/integration-guide.md"
+}

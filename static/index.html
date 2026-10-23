@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VulnScan · 漏洞扫描</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e;
+    --critical: #f85149; --high: #f0883e; --medium: #d29922; --low: #58a6ff;
+    --accent: #2f81f7; --ok: #3fb950;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 16px 60px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 20px; } h1 span { color: var(--accent); }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  input[type=text] { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .engines { display: flex; gap: 16px; margin: 10px 0 14px; flex-wrap: wrap; }
+  .engines label { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; cursor: pointer; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 18px; font-size: 13px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 4px 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--border); word-break: break-all; }
+  tr.click { cursor: pointer; } tr.click:hover { background: #1c2129; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .b-queued   { background: #30363d; color: var(--muted); }
+  .b-running  { background: #1f3a5f; color: #79b8ff; }
+  .b-done     { background: #14351f; color: var(--ok); }
+  .b-error    { background: #4a1d1d; color: var(--critical); }
+  .s-CRITICAL { background: #4a1215; color: var(--critical); }
+  .s-HIGH     { background: #43240a; color: var(--high); }
+  .s-MEDIUM   { background: #3d2e07; color: var(--medium); }
+  .s-LOW      { background: #10304f; color: var(--low); }
+  .stats { display: flex; gap: 10px; margin: 12px 0; flex-wrap: wrap; }
+  .stat { flex: 1; min-width: 110px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .stat .n { font-size: 22px; font-weight: 700; }
+  .stat .l { color: var(--muted); font-size: 11px; }
+  .fp-note { color: var(--muted); font-size: 12px; margin: 6px 0 10px; }
+  .fp-note b { color: var(--medium); }
+  .toolbar { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+  .toolbar select, .toolbar input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+  .toolbar input { width: 200px; }
+  pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 12px; overflow: auto; white-space: pre-wrap; max-height: 480px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .hide { display: none; }
+  .back { margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Vuln<span>Scan</span></h1>
+    <span class="sub">gitleaks · osv-scanner · trivy 三引擎聚合扫描</span>
+  </header>
+
+  <!-- ============ 列表视图 ============ -->
+  <div id="list-view">
+    <div class="card">
+      <label>扫描目标（本地目录绝对路径）</label>
+      <input type="text" id="target" placeholder="例如 E:\reg-project\aideepin">
+      <div class="engines">
+        <label><input type="checkbox" value="gitleaks" checked> gitleaks 密钥</label>
+        <label><input type="checkbox" value="osv-scanner" checked> osv-scanner 依赖漏洞</label>
+        <label><input type="checkbox" value="trivy" checked> trivy 依赖+IaC</label>
+      </div>
+      <button id="btn-scan" onclick="submitScan()">开始扫描</button>
+      <span id="create-err" class="muted" style="margin-left:10px;color:var(--critical)"></span>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <b>扫描历史</b>
+        <button class="ghost" onclick="refresh()">刷新</button>
+      </div>
+      <table>
+        <thead><tr><th>时间</th><th>目标</th><th>引擎</th><th>状态</th><th>结果</th><th></th></tr></thead>
+        <tbody id="scan-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============ 详情视图 ============ -->
+  <div id="detail-view" class="hide">
+    <button class="ghost back" onclick="showList()">← 返回列表</button>
+    <div class="card">
+      <div id="d-head"></div>
+      <div class="stats" id="d-stats"></div>
+      <div id="d-notes" class="fp-note"></div>
+      <div class="toolbar">
+        <select id="f-sev" onchange="loadFindings()">
+          <option value="">全部严重度</option>
+          <option>CRITICAL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option>
+        </select>
+        <select id="f-type" onchange="loadFindings()">
+          <option value="">全部类型</option>
+          <option value="secret">密钥</option>
+          <option value="sca">依赖漏洞</option>
+          <option value="iac">IaC 配置</option>
+          <option value="code">代码缺陷</option>
+        </select>
+        <select id="f-fp" onchange="loadFindings()">
+          <option value="0">排除疑似误报</option>
+          <option value="1">含疑似误报</option>
+        </select>
+        <input type="text" id="f-q" placeholder="搜索关键字 / CVE / 文件名…" onkeydown="if(event.key==='Enter')loadFindings()">
+        <button class="ghost" onclick="loadReport()">查看完整报告</button>
+      </div>
+      <table>
+        <thead><tr><th style="width:76px">严重度</th><th style="width:70px">类型</th><th>标题</th><th>位置 / 包</th><th>修复建议</th></tr></thead>
+        <tbody id="f-rows"></tbody>
+      </table>
+      <p class="muted" id="f-count" style="margin-top:8px"></p>
+    </div>
+    <div class="card hide" id="report-card">
+      <b style="display:block;margin-bottom:8px">完整报告（Markdown）</b>
+      <pre id="d-report"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentId = null, pollTimer = null;
+
+async function api(path) {
+  const r = await fetch(path);
+  return r.json();
+}
+
+async function submitScan() {
+  const target = document.getElementById('target').value.trim();
+  const engines = [...document.querySelectorAll('.engines input:checked')].map(c => c.value);
+  document.getElementById('create-err').textContent = '';
+  const r = await fetch('/api/scans', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({target, engines})
+  });
+  const d = await r.json();
+  if (!d.ok) { document.getElementById('create-err').textContent = d.error; return; }
+  showDetail(d.scan.id);
+}
+
+async function refresh() {
+  const d = await api('/api/scans');
+  const rows = d.scans.map(s => {
+    const st = s.stats ? JSON.parse(s.stats) : {};
+    let result = '';
+    if (s.status === 'done') {
+      const parts = Object.entries(st.by_severity || {})
+        .sort((a, b) => ['CRITICAL','HIGH','MEDIUM','LOW'].indexOf(a[0]) - ['CRITICAL','HIGH','MEDIUM','LOW'].indexOf(b[0]));
+      result = parts.map(([k, v]) =>
+        `<span class="badge s-${k}">${k.slice(0,1)}:${v}</span>`).join(' ') +
+        ` <span class="muted">共 ${st.total}</span>`;
+    } else if (s.status === 'error') { result = `<span class="muted">${(s.error||'').split('\n')[0].slice(0,80)}</span>`; }
+    return `<tr class="click" onclick="showDetail('${s.id}')">
+      <td>${s.created}</td><td>${s.target}</td><td>${s.engines}</td>
+      <td><span class="badge b-${s.status}">${s.status}</span></td>
+      <td>${result}</td>
+      <td class="muted">${s.status==='done'||s.status==='error' ? '' : '…'}</td></tr>`;
+  }).join('');
+  document.getElementById('scan-rows').innerHTML =
+    rows || '<tr><td colspan="6" class="muted">暂无扫描记录</td></tr>';
+}
+
+async function showDetail(id) {
+  currentId = id;
+  document.getElementById('list-view').classList.add('hide');
+  document.getElementById('detail-view').classList.remove('hide');
+  document.getElementById('report-card').classList.add('hide');
+  const d = await api(`/api/scans/${id}`);
+  if (!d.ok) return;
+  const s = d.scan;
+  document.getElementById('d-head').innerHTML =
+    `<b>${s.target}</b> <span class="badge b-${s.status}">${s.status}</span>
+     <span class="muted" style="margin-left:8px">引擎: ${s.engines} · 提交: ${s.created}${s.finished ? ' · 完成: ' + s.finished : ''}</span>`;
+  const stats = s.stats ? JSON.parse(s.stats) : null;
+  document.getElementById('d-notes').textContent =
+    stats && stats.engine_notes && stats.engine_notes.length ? '⚠ ' + stats.engine_notes.join(' | ') : '';
+  if (stats) {
+    const bs = stats.by_severity || {};
+    document.getElementById('d-stats').innerHTML =
+      ['CRITICAL','HIGH','MEDIUM','LOW'].map(k =>
+        `<div class="stat"><div class="n" style="color:var(--${k.toLowerCase()})">${bs[k]||0}</div><div class="l">${k}</div></div>`).join('') +
+      `<div class="stat"><div class="n">${stats.total}</div><div class="l">总计（去重后）</div></div>
+       <div class="stat"><div class="n" style="color:var(--ok)">${stats.actionable}</div><div class="l">可行动（排除误报）</div></div>`;
+  } else {
+    document.getElementById('d-stats').innerHTML = '';
+  }
+  if (s.status === 'running' || s.status === 'queued') {
+    loadFindings(true);
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(() => showDetail(id), 3000);
+  } else {
+    loadFindings();
+  }
+}
+
+async function loadFindings(emptyOnly) {
+  if (emptyOnly) {
+    document.getElementById('f-rows').innerHTML =
+      '<tr><td colspan="5" class="muted">扫描进行中，完成后自动刷新…</td></tr>';
+    document.getElementById('f-count').textContent = '';
+    return;
+  }
+  const p = new URLSearchParams({
+    severity: document.getElementById('f-sev').value,
+    type: document.getElementById('f-type').value,
+    include_fp: document.getElementById('f-fp').value,
+    q: document.getElementById('f-q').value.trim(),
+  });
+  const d = await api(`/api/scans/${currentId}/findings?${p}`);
+  if (!d.ok) {
+    document.getElementById('f-rows').innerHTML =
+      '<tr><td colspan="5" class="muted">结果尚未生成</td></tr>';
+    return;
+  }
+  document.getElementById('f-rows').innerHTML = d.findings.map(f => {
+    const loc = f.file ? `${(f.file||'').replace(/^.*[\\\/]/, m => m)}${f.line ? ':' + f.line : ''}` : '';
+    const pkg = f.package ? `${f.package} ${f.version||''}` : loc;
+    return `<tr>
+      <td><span class="badge s-${f.severity||'LOW'}">${f.severity||'—'}</span></td>
+      <td class="muted">${f.type||''}</td>
+      <td>${f.title||''}${f.cve ? ' <span class="muted">('+f.cve+')</span>' : ''}
+          ${f.likely_fp ? '<span class="badge b-queued" title="'+(f.fp_reason||'疑似误报')+'">疑似误报</span>' : ''}</td>
+      <td class="muted">${pkg}</td>
+      <td class="muted">${f.fixed_version ? '升级到 ' + f.fixed_version : (f.remediation||'').slice(0,80)}</td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="muted">无匹配结果</td></tr>';
+  document.getElementById('f-count').textContent = `显示 ${d.findings.length} 条（已按严重度排序）`;
+}
+
+async function loadReport() {
+  const r = await fetch(`/api/scans/${currentId}/report`);
+  if (!r.ok) return;
+  document.getElementById('report-card').classList.remove('hide');
+  document.getElementById('d-report').textContent = await r.text();
+}
+
+function showList() {
+  clearTimeout(pollTimer);
+  document.getElementById('detail-view').classList.add('hide');
+  document.getElementById('list-view').classList.remove('hide');
+  refresh();
+}
+
+refresh();
+setInterval(() => { if (!document.getElementById('list-view').classList.contains('hide')) refresh(); }, 5000);
+</script>
+</body>
+</html>
