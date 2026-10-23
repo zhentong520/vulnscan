@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """VulnScan 核心层：扫描引擎封装 + 任务队列 + 结果存储。
 
-封装三个已实测验证的引擎：
+封装四个已实测验证的引擎：
   - gitleaks    : 密钥泄漏检测（本地运行，无网络依赖）
   - osv-scanner : 依赖漏洞 SCA（需直连 api.osv.dev，走代理会卡死）
   - trivy       : 依赖漏洞 + IaC 配置（库源用 public.ecr.aws 直连）
+  - nuclei      : Web 站点主动扫描 DAST（仅限已授权目标，排除 DoS/侵入式模板）
 
 聚合与报告复用 vuln-scan-orchestrator skill 的 tools（实测管线）。
 """
@@ -34,7 +35,9 @@ PIPELINE_TOOLS = BASE / "tools"
 # 同一时间只允许一个扫描任务在跑（扫描都是重 IO/网络操作）
 _scan_lock = threading.Lock()
 
-ENGINES = ("gitleaks", "osv-scanner", "trivy")
+ENGINES = ("gitleaks", "osv-scanner", "trivy", "nuclei")
+WEB_ENGINES = ("nuclei",)   # 只能作用于 URL 目标的引擎
+DIR_ENGINES = ("gitleaks", "osv-scanner", "trivy")  # 只能作用于本地目录的引擎
 
 
 # ---------------------------------------------------------------- config / exe
@@ -53,7 +56,8 @@ def _config():
 def find_exe(engine):
     """在 scan_tools/bin 下找引擎二进制，找不到返回 None。"""
     st = _config().get("scan_tools_dir", "")
-    exe_map = {"gitleaks": "gitleaks.exe", "osv-scanner": "osv.exe", "trivy": "trivy.exe"}
+    exe_map = {"gitleaks": "gitleaks.exe", "osv-scanner": "osv.exe",
+               "trivy": "trivy.exe", "nuclei": "nuclei.exe"}
     name = exe_map.get(engine)
     if not name:
         return None
@@ -102,7 +106,26 @@ def _run_trivy(exe, target, out_json):
     return False, f"trivy exit={r.returncode}: {(r.stderr or r.stdout)[-300:]}"
 
 
-RUNNERS = {"gitleaks": _run_gitleaks, "osv-scanner": _run_osv, "trivy": _run_trivy}
+def _run_nuclei(exe, target, out_json):
+    """Web 站点主动扫描（DAST）。降噪策略：
+    - 排除 dos / intrusive / fuzz 标签模板，避免影响目标可用性
+    - 限速 60 req/s；禁用更新检查（模板本地已就绪，避免网络卡顿）
+    - 直连目标：剔除代理环境变量，内网地址走系统代理会不通
+    """
+    cmd = [str(exe), "-u", target,
+           "-j", "-o", str(out_json),
+           "-severity", "low,medium,high,critical",
+           "-exclude-tags", "intrusive,dos,fuzz",
+           "-rl", "60", "-duc", "-silent", "-nc", "-stats"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600,
+                       env=_direct_env())
+    if r.returncode in (0, 1) and out_json.exists():
+        return True, ""
+    return False, f"nuclei exit={r.returncode}: {(r.stderr or r.stdout)[-300:]}"
+
+
+RUNNERS = {"gitleaks": _run_gitleaks, "osv-scanner": _run_osv, "trivy": _run_trivy,
+           "nuclei": _run_nuclei}
 
 
 # ---------------------------------------------------------------- storage
@@ -223,13 +246,29 @@ def execute_scan(scan_id, target, engines):
         _scan_lock.release()
 
 
-def create_scan(target, engines):
-    target = str(Path(target).resolve())
-    if not Path(target).is_dir():
-        raise ValueError(f"目标目录不存在: {target}")
+def is_web_target(target: str) -> bool:
+    return str(target).strip().lower().startswith(("http://", "https://"))
+
+
+def create_scan(target, engines, authorized=False):
+    """创建扫描任务。本地目录目标跑 gitleaks/osv/trivy；
+    URL 目标（http/https）跑 nuclei 主动 Web 扫描——必须先过授权确认。"""
+    target = str(target).strip()
     engines = [e for e in engines if e in ENGINES]
     if not engines:
         raise ValueError("至少选择一个引擎")
+    if is_web_target(target):
+        if not authorized:
+            raise ValueError("Web 扫描必须先确认已获得目标站点授权（仅限自有/已授权资产）")
+        bad = [e for e in engines if e not in WEB_ENGINES]
+        if bad:
+            raise ValueError(f"URL 目标仅支持 nuclei 引擎，请取消勾选: {', '.join(bad)}")
+    else:
+        if "nuclei" in engines:
+            raise ValueError("nuclei 仅用于 Web 站点扫描：目标请填写 http(s):// URL")
+        target = str(Path(target).resolve())
+        if not Path(target).is_dir():
+            raise ValueError(f"目标目录不存在: {target}")
     scan_id = uuid.uuid4().hex[:12]
     with _db() as conn:
         conn.execute("INSERT INTO scans(id,target,engines,status,created) VALUES(?,?,?,?,?)",

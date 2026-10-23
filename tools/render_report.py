@@ -57,14 +57,18 @@ def main() -> int:
     L = [f"# 漏洞扫描报告：{args.project}", "",
          f"- 扫描时间：{now}",
          f"- 引擎：{args.engines or ', '.join(stats.get('by_engine', {}).keys())}",
-         "- 授权状态：自有资产" + ("（DAST 已过授权闸门）" if "zap" in (args.engines or "").lower() else ""), "",
+         "- 授权状态：自有资产" + ("（Web DAST 已过授权确认闸门）"
+                                  if any(e in (args.engines or "").lower() for e in ("nuclei", "zap")) else ""), "",
          "## 执行摘要", "",
          f"**{sev_line}**（去重后共 {stats.get('total', 0)} 条）", ""]
 
     fixable = [f for f in findings if f.get("fixed_version") and not f.get("likely_fp")
                and f["severity"] in ("CRITICAL", "HIGH", "MEDIUM")]
     secrets = [f for f in findings if f.get("type") == "secret" and not f.get("likely_fp")]
-    normal = [f for f in findings if f not in fixable and f not in secrets and not f.get("likely_fp")]
+    web = [f for f in findings if f.get("type") == "web" and not f.get("likely_fp")
+           and f not in secrets]
+    normal = [f for f in findings if f not in fixable and f not in secrets
+              and f not in web and not f.get("likely_fp")]
     fps = [f for f in findings if f.get("likely_fp")]
 
     if fixable:
@@ -74,6 +78,10 @@ def main() -> int:
     if secrets:
         L += ["## 🔴 密钥泄露（立即轮换——密钥进过仓库即假定已泄露）", ""]
         for f in secrets:
+            L.append(render_finding(f))
+    if web:
+        L += ["## 🌐 Web 站点发现（nuclei 主动探测，仅限已授权目标）", ""]
+        for f in web:
             L.append(render_finding(f))
     if normal:
         L += ["## 其他发现（按 severity 排序）", ""]

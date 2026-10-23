@@ -229,10 +229,41 @@ def parse_bandit(data):
         }
 
 
+def parse_nuclei(data):
+    """nuclei JSONL（-j 输出为逐行 JSON，main() 已预解析为 list）。"""
+    if isinstance(data, dict):
+        data = [data]
+    for r in data or []:
+        info = r.get("info") or {}
+        cls = info.get("classification") or {}
+        cves = cls.get("cve-id") or []
+        refs = info.get("reference") or []
+        if isinstance(refs, str):
+            refs = [refs]
+        extracted = r.get("extracted-results") or []
+        ev = "; ".join(str(x) for x in extracted)[:200]
+        matched = r.get("matched-at") or r.get("host", "")
+        sev = norm_sev(info.get("severity", ""), "nuclei")
+        if sev == "INFO":
+            sev = "LOW"
+        yield {
+            "type": "web", "engine": "nuclei",
+            "title": f"{info.get('name') or r.get('template-id', 'nuclei-hit')}",
+            "rule": r.get("template-id", ""),
+            "severity": sev,
+            "cve": cves[0] if cves else "",
+            "file": matched, "line": 0,
+            "evidence": redact((matched + (f" | 提取: {ev}" if ev else ""))[:300]),
+            "remediation": ((info.get("remediation") or "") or (refs[0] if refs else "")
+                            or (info.get("description") or ""))[:300],
+            "cwe": ((cls.get("cwe-id") or [""])[0] or "").split(",")[0],
+        }
+
+
 PARSERS = {
     "semgrep": parse_semgrep, "gitleaks": parse_gitleaks, "trivy": parse_trivy,
     "osv-scanner": parse_osv, "pip-audit": parse_pip_audit, "checkov": parse_checkov,
-    "bandit": parse_bandit,
+    "bandit": parse_bandit, "nuclei": parse_nuclei,
 }
 
 
@@ -274,7 +305,16 @@ def main() -> int:
             skipped.append({"file": str(p), "reason": "文件不存在或为空（引擎未运行/失败）"})
             continue
         try:
-            data = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            skipped.append({"file": str(p), "reason": f"读取失败: {e}"})
+            continue
+        try:
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                # JSONL 兜底：nuclei -j 输出为逐行 JSON
+                data = [json.loads(l) for l in text.splitlines() if l.strip()]
         except json.JSONDecodeError as e:
             skipped.append({"file": str(p), "reason": f"JSON 解析失败: {e}"})
             continue

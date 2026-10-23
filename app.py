@@ -20,7 +20,8 @@ def create_scan():
     body = request.get_json(force=True, silent=True) or {}
     try:
         scan = scanner.create_scan(body.get("target", "").strip(),
-                                   body.get("engines", []))
+                                   body.get("engines", []),
+                                   authorized=bool(body.get("authorized")))
         return jsonify({"ok": True, "scan": scan}), 201
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400

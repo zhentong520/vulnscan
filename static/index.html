@@ -57,19 +57,24 @@
 <div class="wrap">
   <header>
     <h1>Vuln<span>Scan</span></h1>
-    <span class="sub">gitleaks · osv-scanner · trivy 三引擎聚合扫描</span>
+    <span class="sub">gitleaks · osv-scanner · trivy · nuclei 四引擎聚合扫描</span>
   </header>
 
   <!-- ============ 列表视图 ============ -->
   <div id="list-view">
     <div class="card">
-      <label>扫描目标（本地目录绝对路径）</label>
-      <input type="text" id="target" placeholder="例如 E:\reg-project\aideepin">
+      <label>扫描目标（本地目录绝对路径，或 http(s):// 站点 URL）</label>
+      <input type="text" id="target" placeholder="例如 E:\reg-project\aideepin 或 http://192.168.1.10:8080" oninput="onTargetInput()">
       <div class="engines">
         <label><input type="checkbox" value="gitleaks" checked> gitleaks 密钥</label>
         <label><input type="checkbox" value="osv-scanner" checked> osv-scanner 依赖漏洞</label>
         <label><input type="checkbox" value="trivy" checked> trivy 依赖+IaC</label>
+        <label><input type="checkbox" value="nuclei"> nuclei Web 漏洞（仅 URL 目标）</label>
       </div>
+      <label id="auth-row" style="display:none;align-items:center;gap:6px;color:var(--medium);font-size:13px;margin-bottom:10px">
+        <input type="checkbox" id="authorized">
+        我确认已获得该站点的扫描授权（仅限内部 / 已授权资产，禁止扫公网无关目标）
+      </label>
       <button id="btn-scan" onclick="submitScan()">开始扫描</button>
       <span id="create-err" class="muted" style="margin-left:10px;color:var(--critical)"></span>
     </div>
@@ -102,6 +107,7 @@
           <option value="secret">密钥</option>
           <option value="sca">依赖漏洞</option>
           <option value="iac">IaC 配置</option>
+          <option value="web">Web 站点发现</option>
           <option value="code">代码缺陷</option>
         </select>
         <select id="f-fp" onchange="loadFindings()">
@@ -132,13 +138,31 @@ async function api(path) {
   return r.json();
 }
 
+function onTargetInput() {
+  const t = document.getElementById('target').value.trim().toLowerCase();
+  const isWeb = t.startsWith('http://') || t.startsWith('https://');
+  document.getElementById('auth-row').style.display = isWeb ? 'flex' : 'none';
+}
+
 async function submitScan() {
   const target = document.getElementById('target').value.trim();
+  const t = target.toLowerCase();
+  const isWeb = t.startsWith('http://') || t.startsWith('https://');
   const engines = [...document.querySelectorAll('.engines input:checked')].map(c => c.value);
   document.getElementById('create-err').textContent = '';
+  if (isWeb) {
+    if (!engines.includes('nuclei')) {
+      document.getElementById('create-err').textContent = 'URL 目标请勾选 nuclei 引擎'; return;
+    }
+    if (!document.getElementById('authorized').checked) {
+      document.getElementById('create-err').textContent = 'Web 扫描必须先勾选授权确认'; return;
+    }
+  } else if (engines.includes('nuclei')) {
+    document.getElementById('create-err').textContent = 'nuclei 仅用于 http(s):// 站点扫描'; return;
+  }
   const r = await fetch('/api/scans', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({target, engines})
+    body: JSON.stringify({target, engines, authorized: isWeb})
   });
   const d = await r.json();
   if (!d.ok) { document.getElementById('create-err').textContent = d.error; return; }
